@@ -1,9 +1,10 @@
 import pandas as pd
 import numpy as np
 import scanpy as sc
+import pickle
 
 from typing import TypedDict, Annotated, Optional
-from anndata._core.anndata import AnnData
+#from anndata._core.anndata import AnnData
 import operator 
 #langchain
 from langchain_openai.chat_models.base import ChatOpenAI
@@ -60,7 +61,7 @@ class MainGraphState(TypedDict):
     anno_llm: ChatOpenAI #LLM for annotation, models with reasoning ability is recommended
 
     #input
-    input_adata: AnnData 
+    adata_dir: str #pickle temp file dir for anndata  
     cluster_key: str #clusters for annotation, e.g. 'leiden'
     maker_df_dir: str #local direction of cell marker df
     marker_offered: bool #if marker df offered and successfully load
@@ -77,8 +78,7 @@ class MainGraphState(TypedDict):
     exp_summary_dic: dict #expression summary of marker genes and hvgs for each cluster, where cluster name as key and expression table for each genes as item
     anno_results: Annotated[list[dict], operator.add] #annotation result for each cluster from subgraph
     #output
-    anno_result_df: pd.DataFrame #annotation result for each cluster, where [cluster name], [annotated cell type], [reason], [functional group] as columns
-    output_adata: AnnData #output anndata with cell type annotation
+
 
 class MapGraphState(TypedDict):
     #parameters
@@ -313,29 +313,29 @@ class CellHashtagAgent:
         # Configure the thread
         config = {"configurable": {"thread_id": thread_id}}
 
-        # Execute the agent with error handling
-        try:
-            agent_res = self.graph.invoke(
-                input={
-                    "anno_llm": llm,
-                    "max_iter": max_iter,
-                    "input_adata": adata,
-                    "cluster_key": cluster_key,
-                    "maker_df_dir": cell_marker_df_dir,
-                },
-                config=config
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to execute the agent: {e}")
+        #Solving adata unserializability problem with pickle
+        adata_dir = "adata_temp.pkl"
+        with open(adata_dir, "wb") as f:
+            pickle.dump(adata, f, protocol=pickle.HIGHEST_PROTOCOL)
+        #run agent
+        agent_res = self.graph.invoke(
+            input={
+                "anno_llm": llm,
+                "max_iter": max_iter,
+                "adata_dir": adata_dir,
+                "cluster_key": cluster_key,
+                "maker_df_dir": cell_marker_df_dir,
+            },
+            config=config
+        )
 
         # Safely extract the output AnnData object
-        output_adata = agent_res.get("output_adata")
-        if output_adata is None:
-            raise RuntimeError("Output AnnData not found in agent results.")
-
         # Plot the annotation if requested, with error handling
         if plot_annotation:
             try:
+                with open(adata_dir, "rb") as f:
+                    output_adata = pickle.load(f)
+
                 if 'umap' not in output_adata.uns:
                     print('Calculate umap before plotting...')
                     sc.pp.pca(output_adata)
@@ -350,7 +350,7 @@ class CellHashtagAgent:
             except Exception as e:
                 print(f"Warning: Failed to plot annotation: {e}")
 
-        return output_adata, agent_res
+        return agent_res
 
 
     #================================================================
@@ -558,7 +558,7 @@ class CellHashtagAgent:
         3. Summarizes the selected metadata for the entire dataset and per cluster.
         
         Parameters:
-        - adata (AnnData): AnnData object containing single-cell RNA sequencing data.
+        - adata_dir (str): pickle dir for AnnData object containing single-cell RNA sequencing data.
         - llm: Language model instance used to select metadata columns.
         - group (str): Column name in adata.obs for clustering (default: 'leiden').
         
@@ -572,7 +572,9 @@ class CellHashtagAgent:
         #pass parameters
         llm = state["anno_llm"]
         group = state["cluster_key"]
-        adata = state["input_adata"]
+        adata_dir = state["adata_dir"]
+        with open(adata_dir, "rb") as f:
+            adata = pickle.load(f)
 
         #--------------------------------
         #data presception, step1, get over all presception
@@ -614,7 +616,7 @@ class CellHashtagAgent:
         #pass parameters
         llm = state["anno_llm"]
         metadata_summary = state["metadata_summary"]
-        df_dir = state["maker_df_dir"]
+        maker_df_dir = state["maker_df_dir"]
         #--------------------------------
         #call for llm
         
@@ -647,6 +649,7 @@ class CellHashtagAgent:
             print("Cell marker dataframe loaded.")
             try:
                 cell_markers_table = df2markdownTable(marker_df)
+                marker_df.to_csv('scraped_cell_markers.csv', encoding="utf-8-sig", index=False)
                 marker_offered = True
             except:
                 print("Failed to convert cell marker dataframe to markdown.")
@@ -755,7 +758,7 @@ class CellHashtagAgent:
         #--------------------------------
         #scape cell markers in parallel
         process_marker_scrape = partial(
-            slef.scrape_markers,
+            self.scrape_markers,
             llm = llm, 
             query = query,
             )
@@ -803,7 +806,7 @@ class CellHashtagAgent:
         
         Parameters:
         state (MainGraphStat): A state object containing necessary parameters.
-            - input_adata: AnnData object containing the single-cell RNAseq data.
+            - adata_dir: pickle file dir for AnnData object containing the single-cell RNAseq data.
             - cluster_key: The key in adata.obs that defines the cluster assignments.
         
         Returns:
@@ -815,7 +818,9 @@ class CellHashtagAgent:
         import scanpy as sc
         #--------------------------------
         #parse parameters
-        adata = state["input_adata"]
+        adata_dir = state["adata_dir"]
+        with open(adata_dir, "rb") as f:
+            adata = pickle.load(f)
         group = state["cluster_key"]
         clusters = adata.obs[group].unique().tolist()
         print("Getting data gene expressing summary...")
@@ -879,7 +884,9 @@ class CellHashtagAgent:
         llm = state["anno_llm"]
         metadata_summary = state["metadata_summary"]
         anno_results = state["anno_results"]
-        adata = state["input_adata"]
+        adata_dir = state["adata_dir"]
+        with open(adata_dir, "rb") as f:
+            adata = pickle.load(f)
         print("Normalizing major cell type annotations...")
         #convert annotation result to dataframe
         res_df_list = []
@@ -898,6 +905,7 @@ class CellHashtagAgent:
             input_variables=["metadata_summary", "annotated_cell_types"],
             template=normaliztion_prompt
         )
+        anno_results_df['norm. cell type'] = anno_results_df["cell type"]
         i = 0
         while i < 3:
             try:
@@ -907,14 +915,16 @@ class CellHashtagAgent:
                     "annotated_cell_types": annotated_cell_types
                 })
                 #get back to dataframe
-                anno_results_df['norm. cell type'] = anno_results_df["cell type"]
-                anno_results_df['norm. cell type'].replace(response, inplace=True)
+                anno_results_df['norm. cell type'] = anno_results_df['norm. cell type'].map(response)
                 break
             except:
                 i+=1
         #save to csv 
+        
+        
         anno_results_df.to_csv('AnnoResDF.csv')
         print('Normalized annotation result saved as csv.')
+        #convert to adata 
         anno_results_df['cluster'] = anno_results_df['cluster'].astype(str)
         anno_results_df['functional group'] = anno_results_df['functional group'].astype(str)
         temp_df = anno_results_df.copy().set_index('cluster')
@@ -923,16 +933,21 @@ class CellHashtagAgent:
         anno_dic_fun = temp_df['functional group'].to_dict()
         #get back to adata
         adata.obs["Cell#"] = adata.obs["leiden"]
-        adata.obs["Cell#"] = adata.obs["cell#"].map(anno_dic)
+        adata.obs["Cell#"] = adata.obs["Cell#"].map(anno_dic)
+        print('Normalized cell type annotated.')
         adata.obs["Cell#_raw"] = adata.obs["leiden"]
         adata.obs["Cell#_raw"] = adata.obs["Cell#_raw"].map(anno_dic_raw)
+        print('Raw cell type annotated.')
         adata.obs["Cell#_funcgroup"] = adata.obs["leiden"]
         adata.obs["Cell#_funcgroup"] = adata.obs["Cell#_funcgroup"].map(anno_dic_fun)
-        return {
-            "anno_result_df": anno_results_df,
-            "output_adata": adata,
-        }
-
+        print('Functional group annotated.')
+        #save to pickle, it load faster
+        with open(adata_dir, "wb") as f:
+            pickle.dump(adata, f, protocol=pickle.HIGHEST_PROTOCOL)
+        #save annotated data
+        print("Saving Annotated adata to .h5ad file.")
+        adata.write_h5ad('Annotated_adata.h5ad')
+            
     #----------------------------------------------------------------
     #Define decision functions for subgraph
     def _decfun_router(self, state:MainGraphState):

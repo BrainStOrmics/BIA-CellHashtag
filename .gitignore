@@ -1,0 +1,8 @@
+#ignore local_tests
+local_tests/
+#ignore all pickel files
+*.pkl
+#ignore test result files
+AnnoResDF.csv
+scraped_cell_markers.csv
+Annotated_adata.h5ad
