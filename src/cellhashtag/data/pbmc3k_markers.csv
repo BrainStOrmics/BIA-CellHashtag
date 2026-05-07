@@ -1,0 +1,9 @@
+cell_type,cell_markers
+Cluster_0,"['LTB', 'IL32', 'CD2', 'MAL', 'AQP3']"
+Cluster_1,"['TYROBP', 'CST3', 'S100A8', 'LGALS1', 'FCN1']"
+Cluster_2,"['HLA-DPB1', 'CD79A', 'HLA-DRB1', 'HLA-DPA1', 'CD79B']"
+Cluster_3,"['CCL5', 'NKG7', 'IL32', 'GZMA', 'CST7']"
+Cluster_4,"['LST1', 'FCER1G', 'AIF1', 'CST3', 'COTL1']"
+Cluster_5,"['NKG7', 'GNLY', 'CTSW', 'GZMB', 'PRF1']"
+Cluster_6,"['HLA-DRB1', 'ARPC1B', 'HLA-DPB1', 'HLA-DMA', 'HLA-DPA1']"
+Cluster_7,"['SDPR', 'GPX1', 'GNG11', 'PF4', 'PPBP']"

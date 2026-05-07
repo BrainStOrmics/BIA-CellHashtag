@@ -1,0 +1,18 @@
+llm_config:
+  # Setup chat/reasoning model, for sematic reasoning 
+  CHAT_MODEL_API:
+    api: # Your model api here
+    url: # Your model url here
+    model: # Your model name here
+    type: openai # Only openai api-compatible llm is supported, for now
+  # Setup molti-modal chat model(w/ at least vision ability)
+  MULTIMODAL_CHAT_MODEL_API:
+    api: # Your model api here
+    url: # Your model url here
+    model: # Your model name here
+    type: openai # Only openai api-compatible llm is supported, for now
+  # Tun on and off thinking/search here for both chat and mmchat model
+  ENABLE_THINKING: true
+  ENABLE_SEARCH: false
+
+
