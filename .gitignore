@@ -5,3 +5,6 @@ local_tests/
 #ignore all pickel files
 *.pkl
 **/__pycache__/
+#ignore vibe coding files
+.research_harness_system/
+CLAUDE.md

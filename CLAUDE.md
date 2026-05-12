@@ -8,20 +8,29 @@ Automated cell type annotation tool for scRNA-seq and spatial RNA-seq data using
 
 ```
 src/cellhashtag/
-  _Agent.py         # Main agent class
-  _prompts.py       # Prompt templates
+  _Agent.py              # Main agent class
+  _prompts.py            # Prompt templates
   graph/
-    cellhashtag.py  # Main annotation graph
-    annotator.py    # Annotation logic
+    orchestrator.py      # Top-level workflow: clustering → annotation → summary
+    high_hierarchy/
+      __init__.py        # Exports create_graph()
+      graph.py           # High hierarchy state machine
+      nodes.py           # DataRep, Estimate, Knowledge, Reflection
+    low_hierarchy/
+      graph.py
+      nodes.py           # DataRep, Harness
+    tree_search/
+      graph.py
+      nodes.py           # Search, Memory
   config/
-    config.py       # Configuration
-    config.yaml     # User config
+    config.py            # Configuration
+    config.yaml          # User config
   utils/
-    io.py           # Data I/O
-    utilities.py    # Helper functions
-    setup.py        # Setup utilities
+    io.py                # Data I/O
+    utilities.py         # Helper functions
+    setup.py             # Setup utilities
   data/
-    example.h5ad    # Example AnnData
+    example.h5ad         # Example AnnData
     example_cellmarkers.csv  # Marker reference
 ```
 
@@ -36,12 +45,10 @@ src/cellhashtag/
 ## LangGraph Workflow
 
 1. **Data Loading**: Load AnnData (.h5ad) with count matrix
-2. **QC & Preprocessing**: Filter cells, normalize, cluster
-3. **Marker Identification**: Find cluster-specific marker genes
-4. **LLM Annotation**: LLM annotates cell types based on markers
-5. **Self-Criticism**: LLM evaluates its own annotations
-6. **Revision**: If critique fails, revise with additional context
-7. **Output**: Final annotations with confidence scores
+2. **Adaptive Clustering**: Filter cells, normalize, auto-determine optimal clustering resolution
+3. **High Hierarchy Annotation**: DataRep → Estimate → Knowledge → Reflection (推理循环)
+4. **Low Hierarchy Swarm** (if Reflection triggers): DataRep → Harness → Search  Memory (并行树搜索)
+5. **Results Summary**: Final annotations with confidence scores and report
 
 ## Data Format
 
@@ -56,16 +63,18 @@ Output: Cell type annotations added to `.obs['cell_type']`
 ## Code Standards
 
 - Type hints on all public functions
-- LangGraph state only contains lightweight data (paths, summaries)
-- Never put full AnnData objects in graph state
-- Use existing prompt templates in `_prompts.py`
+- LangGraph state only contains lightweight data (paths, summaries) — never full AnnData objects
+- Each subgraph lives in its own directory (`graph/<name>/`) with `graph.py` + `nodes.py`
+- Node functions are scoped to their parent graph only — no cross-graph sharing
+- Subgraphs nest unidirectionally: `orchestrator → high_hierarchy → tree_search`
+- Prompts via `prompts/` directory, not hardcoded in Python
 - Configuration via `config/` — don't hardcode model endpoints
-- Self-criticism loops must have max iteration limits
+- All annotation/criticism loops must have `max_anno_iter` limits
 
 ## Common Patterns
 
-- Marker gene extraction → LLM prompt → annotation → critique loop
+- High hierarchy: marker gene extraction → LLM hypothesis → external knowledge → reflection decision
+- Low hierarchy swarm: constraint-driven tree search with memory for sub-cluster exploration
 - Web scraping for external marker databases (CellMarker, PanglaoDB)
 - Confidence scoring for all annotations
 - Support for both scRNA-seq and spatial RNA-seq
-- Flexible data compatibility (scanpy, AnnData formats)

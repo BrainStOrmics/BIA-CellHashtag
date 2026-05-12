@@ -75,55 +75,144 @@ def _clustering_router(state: dict) -> str:
 
 def _build_annotation_subgraph_node():
     """
-    构建 annotation subgraph 节点。
-    Map-Reduce 模式：对每个 cluster 并行运行 annotation → critic → finalize
+    Build annotation subgraph node using LATS tree search.
+    
+    For each cluster, delegates to low_hierarchy graph which uses
+    LATS as the default search strategy.
     """
-
+    
     def annotation_subgraph_node(state: dict) -> dict:
-        """Map-Reduce annotation 子图。"""
+        """Map-Reduce annotation with LATS search."""
+        # Load adata
         with open(state["adata_path"], "rb") as f:
             adata = pickle.load(f)
-
+        
         cluster_key = state.get("cluster_key", "leiden")
         clusters = adata.obs[cluster_key].unique().tolist()
-        llm = state.get("anno_llm")
-
-        if llm is None:
-            return {
-                "errors": state.get("errors", []) + ["LLM not configured."],
-                "status": "error",
-            }
-
-        # 加载 prompt
-        prompt_template = _load_prompt("annotation_layer1")
-        critic_template = _load_prompt("critic")
-
+        
+        # Load config for LATS
+        config_path = os.path.join(os.path.dirname(__file__), "..", "config", "config.yaml")
+        config = load_config(config_path) if os.path.exists(config_path) else {}
+        
+        # Build low hierarchy graph (LATS-based)
+        low_graph = create_low_hierarchy_graph(config)
+        compiled_low = low_graph.compile()
+        
         all_results = []
-
+        
         for cluster in clusters:
-            result = _annotate_cluster(
-                cluster, adata, cluster_key, llm,
-                prompt_template, critic_template, state
-            )
-            all_results.append(result)
-
-        # 聚合结果
-        cell_type_annotations = {}
-        layer1_confidence = {}
-
-        for r in all_results:
-            cid = r["cluster"]
-            cell_type_annotations[cid] = r.get("cell_type", "Unknown")
-            layer1_confidence[cid] = r.get("confidence", 0.5)
-
+            # Prepare LATS state for this cluster
+            lats_input = {
+                "cluster_id": str(cluster),
+                "cluster_markers": _get_cluster_markers(adata, cluster_key, cluster),
+                "cluster_expression_summary": _get_cluster_expression(adata, [str(cluster)]),
+                "tissue_source": state.get("perceived_info", {}).get("tissue", "unknown"),
+                "experimental_condition": state.get("metadata_summary", ""),
+                
+                # Constraints from harness
+                "allowed_cell_types": None,  # Could filter based on tissue
+                "excluded_markers": [],
+                "priority_pathways": [],
+                
+                # Config paths
+                "lats_config_path": config_path,
+                "lats_prompts_dir": os.path.join(os.path.dirname(__file__), "..", "prompts", "low_hierarchy"),
+                
+                # Iteration control
+                "annotation_iteration": 0,
+                "max_annotation_iter": state.get("max_anno_iter", 5),
+                "min_confidence": config.get("annotation", {}).get("confidence_threshold", 0.7),
+            }
+            
+            # Execute LATS search
+            result = compiled_low.invoke(lats_input)
+            
+            # Extract annotation result
+            annotation = result.get("annotation_result")
+            if annotation and not result.get("fallback_to_manual"):
+                all_results.append({
+                    "cluster": str(cluster),
+                    "cell_type": annotation.get("cell_type", "Unknown"),
+                    "reason": "; ".join(annotation.get("reasoning", [])),
+                    "confidence": annotation.get("confidence", 0.5),
+                    "evidence": annotation.get("evidence", []),
+                })
+            else:
+                # Fallback to simple annotation if LATS fails
+                fallback = _simple_annotation_fallback(cluster, adata, cluster_key, state)
+                all_results.append(fallback)
+        
+        # Aggregate results
+        cell_type_annotations = {r["cluster"]: r["cell_type"] for r in all_results}
+        layer1_confidence = {r["cluster"]: r["confidence"] for r in all_results}
+        
         return {
             "cell_type_annotations": cell_type_annotations,
             "layer1_confidence": layer1_confidence,
             "hashtags": {cid: [f"#{ct}"] for cid, ct in cell_type_annotations.items()},
+            "annotation_details": {r["cluster"]: r for r in all_results},
             "status": "annotation_done",
         }
-
+    
     return annotation_subgraph_node
+
+
+def _get_cluster_markers(adata, cluster_key: str, cluster) -> list:
+    """Extract top marker genes for a cluster."""
+    try:
+        import scanpy as sc
+        if "rank_genes_groups" not in adata.uns:
+            sc.tl.rank_genes_groups(adata, groupby=cluster_key, reference="rest")
+        markers = list(adata.uns["rank_genes_groups"]["names"][cluster][:20])
+        return [m for m in markers if m and not m.startswith("MT-")]
+    except Exception:
+        return []
+
+
+def _get_cluster_expression(adata, clusters) -> Dict[str, float]:
+    """Get average expression summary for clusters."""
+    try:
+        return get_exp_summary(adata, clusters)
+    except Exception:
+        return {}
+
+
+def _simple_annotation_fallback(cluster, adata, cluster_key, state) -> dict:
+    """Fallback annotation when LATS search doesn't produce confident result."""
+    # Simple marker-based annotation as fallback
+    try:
+        import scanpy as sc
+        sc.tl.rank_genes_groups(adata, groupby=cluster_key, reference="rest")
+        top_genes = list(adata.uns["rank_genes_groups"]["names"][cluster][:10])
+        
+        # Basic heuristic: match against known markers
+        cell_markers = state.get("cell_markers_table", "")
+        for line in cell_markers.split("
+")[2:]:  # Skip header
+            if "|" in line:
+                parts = line.split("|")
+                if len(parts) >= 3:
+                    ct, markers = parts[1].strip(), parts[2].strip()
+                    if any(m.strip() in top_genes for m in markers.split(",")):
+                        return {
+                            "cluster": str(cluster),
+                            "cell_type": ct,
+                            "reason": f"Marker match: {top_genes[:5]}",
+                            "confidence": 0.5,
+                            "evidence": [],
+                        }
+    except Exception:
+        pass
+    
+    return {
+        "cluster": str(cluster),
+        "cell_type": "Unknown",
+        "reason": "Fallback: no confident annotation found",
+        "confidence": 0.3,
+        "evidence": [],
+    }
+
+
 
 
 def _annotate_cluster(cluster, adata, cluster_key, llm, prompt, critic_prompt, state):
