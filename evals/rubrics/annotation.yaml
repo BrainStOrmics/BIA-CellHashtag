@@ -1,0 +1,61 @@
+category: annotation
+description: Cell-type annotation accuracy vs gold standard
+scale: 0.0 to 1.0 per dimension, weighted sum = final score
+pass_threshold: 0.70
+fail_threshold: 0.50
+regression_tolerance: 0.05
+
+dimensions:
+  - name: exact_cell_type_match
+    weight: 0.35
+    scorer: scorers.annotation.exact_match
+    scoring:
+      exact match or acceptable_alternate: 1.0
+      same lineage, wrong subtype: 0.50
+      excluded_type matched: 0.0
+      "Unknown" when gold is known: 0.10
+    kind: deterministic
+
+  - name: tier1_marker_overlap
+    weight: 0.25
+    scorer: scorers.annotation.tier1_jaccard
+    # weighted Jaccard on gold tier-1 vs predicted evidence markers
+    scoring: "wj >= 0.60: 1.0; 0.40<=wj<0.60: 0.75; 0.20<=wj<0.40: 0.45; wj<0.20: 0.10"
+    kind: deterministic
+
+  - name: confidence_calibration
+    weight: 0.15
+    scorer: scorers.annotation.expected_calibration_error
+    scoring:
+      ece <= 0.05: 1.0
+      0.05 < ece <= 0.10: 0.80
+      0.10 < ece <= 0.15: 0.55
+      ece > 0.15: 0.15
+    kind: deterministic
+
+  - name: adversarial_reasoning_quality
+    weight: 0.15
+    scorer: judges.adversarial_annotation.reasoning_score
+    scoring:
+      "LLM-judged: 0.0-1.0 continuous; judge prompt is adversarial"
+    kind: llm_judged
+    judge:
+      model_different_from_sut: true
+      temperature: 0.0
+      calibration_set: fixtures/annotation/calibration.jsonl
+      min_kappa: 0.75
+    # combined cap: this dim is multiplied by min(exact_match, tier1_marker_overlap)
+    # so LLM praise cannot override hard evidence failure
+    gated_by: [exact_cell_type_match, tier1_marker_overlap]
+
+  - name: excluded_type_avoidance
+    weight: 0.10
+    scorer: scorers.annotation.excluded_avoidance
+    scoring:
+      "no excluded type in top-3: 1.0; 1 excluded: 0.30; >=2 excluded: 0.0"
+    kind: deterministic
+
+anti_gaming:
+  - Deterministic weight sum = 0.85 (>= 60% hard-evidence rule satisfied)
+  - LLM judge gated on hard dims: cannot rescue a wrong answer
+  - Judge must pass calibration κ >= 0.75 on human-labeled set

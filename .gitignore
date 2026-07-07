@@ -8,3 +8,29 @@ local_tests/
 #ignore vibe coding files
 .research_harness_system/
 CLAUDE.md
+
+# Python
+*.egg-info/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.pyc
+*.pyo
+
+# Data & output
+data/*.pkl
+output/
+
+# IDE & OS
+.env
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/

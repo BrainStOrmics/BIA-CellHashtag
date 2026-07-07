@@ -1,17 +1,22 @@
-# BIA-CellHashtag (Cell#) v2.0 — LLM-Based Single-Cell Annotation Agent
+# BIA-CellHashtag (Cell#) v3.1 — LLM-Based Single-Cell Annotation Agent
 
-Automated cell type annotation for scRNA-seq and spatial RNA-seq data using LLMs. Built on LangGraph with built-in clustering quality assessment, multi-omics support, and a self-criticism annotation loop.
+Automated cell type annotation for scRNA-seq and spatial RNA-seq data using LLMs. Built on LangGraph + DeepAgents with LATS tree search, iterative clustering quality assessment, and multi-omics support.
+
+> **v3.1 adds 8 new skills (25 exports): QC, DEG, plotting, batch correction, spatial loaders, trajectory inference.**
 
 ## Features
 
-- **LLM Self-Criticism**: Annotation → Critique → Revision loop for expert-level quality
-- **Built-in Clustering**: Leiden clustering with multi-metric quality assessment (Silhouette, Modularity, Phiclust) and automatic resolution tuning
-- **Multi-format Input**: `.h5ad`, `.rds` (Seurat), 10x `.mtx`
-- **Multi-omics Support**: scRNA-seq, snRNA-seq, spatial RNA-seq, ATAC-seq, CITE-seq, Metabolomics
-- **Dual-layer Annotation**: Layer 1 (Cell Type) + Layer 2 (Subpopulation / State / Function / Spatial)
+- **LATS Tree Search**: MCTS-based hypothesis exploration with evidence caching (SQLite + TTL)
+- **DeepAgents Integration**: Multi-agent annotation with self-criticism and knowledge retrieval
+- **Iterative Clustering**: Leiden with silhouette + modularity quality checks and automatic resolution tuning
+- **Multi-format Input**: `.h5ad`, `.rds` (Seurat/SCE), 10x `.mtx`, Visium, MERFISH, Stereo-seq
+- **Multi-omics Support**: scRNA-seq, snRNA-seq, spatial RNA-seq, ATAC-seq, CITE-seq
 - **CellWiki Integration**: Structured knowledge base for marker genes and cell types
-- **HITL (Human-in-the-Loop)**: Interactive checkpoints at clustering quality分歧, metadata verification, and annotation review
-- **Rich Output**: Updated AnnData, CSV annotation table, Markdown report with UMAP visualization
+- **Pydantic Configuration**: Type-safe config with YAML + env var + runtime override layers
+- **Rich Output**: Annotated AnnData, CSV table, Markdown report, UMAP visualization, HITL review
+- **Quality Control**: Mitochondrial/ribosomal metrics, cell filtering, doublet detection
+- **Batch Correction**: Harmony, BBKNN, ComBat integration
+- **Trajectory Inference**: PAGA graph-based developmental trajectories
 
 ## Installation
 
@@ -32,29 +37,35 @@ pip install -e .
 ## Quick Start
 
 ```python
-from cellhashtag import CellHashtagAgent, setup_llm
+from cellhashtag import CellHashtagAgent
 
-# Initialize LLM (configure in config/config.yaml or pass directly)
-llm = setup_llm()
+# Create agent (loads config from src/cellhashtag/config/config.yaml)
+agent = CellHashtagAgent(profile="fast")  # or "default", "deep"
 
-# Create agent
-agent = CellHashtagAgent()
-
-# Run annotation
+# Run annotation pipeline
 result = agent.run(
-    input_path="data/pbmc3k_raw.h5ad",
-    llm=llm,
-    input_format="h5ad",
-    cluster_key="leiden",
-    omics_type="scRNA",
-    cell_marker_df_dir="data/pbmc3k_markers.csv",
-    max_iterations=3,      # clustering iterations
-    max_anno_iter=5,       # annotation self-criticism iterations
+    input_path="data/example.h5ad",
     output_dir="output",
+    cluster_key="leiden",
 )
 
-print(result["cell_type_annotations"])
+print(f"Status: {result['status']}")
+print(f"Clusters: {result['n_clusters']}")
 ```
+
+### Configuration
+
+Edit `src/cellhashtag/config/config.yaml` or override at runtime:
+
+```python
+agent = CellHashtagAgent(
+    profile="default",
+    llm__model="qwen-plus",
+    annotation__max_anno_iter=3,
+)
+```
+
+See `.research_harness_system/QUICKSTART.md` for full setup guide.
 
 ## Configuration
 
@@ -79,97 +90,78 @@ llm_config:
 
 ## Architecture
 
-### Pipeline
+v3.0 uses a flat 4-node LangGraph orchestrator:
 
 ```
-Data Perception → Metadata Extraction → Clustering → Quality Assessment →
-Feature Extraction → Knowledge Match → Layer 1 Annotation → Layer 2 Annotation →
-Confidence Assessment → Output Generation
+perception → clustering → annotation → output
 ```
 
-### Clustering Quality Loop
-
-The clustering node runs an iterative loop:
-
-1. Run Leiden clustering at current resolution
-2. Assess quality with Silhouette, Modularity, and Phiclust
-3. Decide: proceed / adjust resolution / trigger HITL
-4. Repeat up to `max_iterations`
-
-### Annotation Self-Criticism Loop
-
-For each cluster:
-
-1. LLM annotates cell type based on marker genes and metadata
-2. Critic LLM evaluates the annotation against 5 criteria
-3. If disapproved, revise with critique feedback
-4. Repeat up to `max_anno_iter`
+- **Perception**: Load h5ad, infer omics type, extract top markers
+- **Clustering**: Iterative Leiden with silhouette + modularity quality checks, automatic resolution tuning
+- **Annotation**: DeepAgents + LATS MCTS tree search per cluster (with error handling)
+- **Output**: Save annotated h5ad + CSV table + Markdown report + UMAP plots + HITL review
 
 ### Project Structure
 
 ```
 src/cellhashtag/
-├── agent.py                          # Main agent class
-├── state.py                          # LangGraph state definition
+├── agent.py              # CellHashtagAgent entry point
 ├── config/
-│   ├── config.py                     # Configuration loader
-│   └── config.yaml                   # User config
+│   ├── config.py         # Pydantic models + load_config()
+│   └── config.yaml       # User configuration
+├── core/
+│   ├── mcts.py           # Pure MCTS algorithm (no LLM/IO)
+│   ├── lats_loop.py      # LATS outer loop: wires MCTS <-> DeepAgents
+│   └── cache.py          # SQLite evidence cache with TTL
 ├── graphs/
-│   ├── orchestrator.py               # Main pipeline orchestrator
-│   └── clustering.py                 # Clustering subgraph
-├── nodes/
-│   ├── data_perception.py            # Input data perception
-│   ├── metadata_node.py              # Metadata extraction
-│   └── clustering_node.py            # Clustering + quality decision
+│   ├── orchestrator.py   # 4-node flat graph
+│   └── clustering.py     # Iterative clustering subgraph
 ├── skills/
-│   ├── clustering_quality/           # Quality assessment tools
-│   │   ├── silhouette_check.py       # Silhouette score
-│   │   ├── modularity_check.py       # Modularity score
-│   │   └── phiclust_check.py         # Phiclust (optional)
-│   └── format_conversion/            # Multi-format loaders
-│       ├── h5ad_loader.py
-│       ├── rds_loader.py
-│       └── mtx_loader.py
-├── prompts/
-│   ├── annotation_layer1.md          # Layer 1 cell type prompt
-│   ├── critic.md                     # Self-criticism prompt
-│   └── functional.md                 # Layer 2 functional prompt
+│   ├── cellwiki/            # CellWiki knowledge queries
+│   ├── clustering_quality/  # Silhouette, modularity, phiclust
+│   ├── clustering_degs/     # find_markers, consensus, resolution scan
+│   ├── format_conversion/   # h5ad, rds, mtx, SCE loaders
+│   ├── quality_control/     # QC metrics, filtering, doublets
+│   ├── batch_correction/    # Harmony, BBKNN, ComBat
+│   ├── trajectory/          # PAGA trajectory inference
+│   ├── spatial/             # Visium, MERFISH, Stereo-seq, generic
+│   ├── lats_search/         # MCTS tests
+│   └── plotting/
+│       ├── embeddings/      # UMAP/t-SNE (Okabe-Ito, PDF+PNG)
+│       ├── gene_expression/ # violin, dot plots
+│       └── heatmaps/        # marker heatmaps with dendrogram
 ├── utils/
-│   ├── cellwiki_client.py            # CellWiki knowledge interface
-│   ├── hitl.py                       # Human-in-the-loop CLI
-│   └── utilities.py                  # Helper functions
-└── data/
-    ├── example.h5ad                  # Example AnnData
-    └── example_cellmarkers.csv       # Marker reference
+│   ├── io.py             # AnnData I/O, marker extraction
+│   └── hitl.py           # Human-in-the-Loop review
+└── prompts/
+    ├── annotation.md                # Annotation system prompt
+    ├── annotation_hypothesis.md     # Hypothesis generation prompt
+    ├── annotation_evaluation.md     # Adversarial evaluation prompt
+    ├── annotation_task.md           # Per-cluster task template
+    └── lats_search.md               # LATS subagent prompt
 ```
 
-## Input / Output
+See `.research_harness_system/ARCHITECTURE.md` for full details.
 
-### Input
+## Development
 
-AnnData (`.h5ad`) with:
-- `.X`: Count matrix (cells x genes)
-- `.obs`: Cell metadata
-- `.var`: Gene names
-- `.obsm`: Embeddings (UMAP, PCA) — optional, computed if missing
+```bash
+# Install dependencies (using BIA-dev conda environment)
+conda activate BIA-dev
 
-### Output
+# Run MCTS unit tests
+python -m pytest src/cellhashtag/skills/lats_search/test_mcts_core.py -v
 
-- **Annotated AnnData** (`.pkl`): `adata.obs["Cell#"]` contains cell type annotations
-- **CSV Table**: Cluster-to-cell-type mapping with confidence scores
-- **Markdown Report**: Annotation summary with reasoning
+# Interactive component tests (Jupyter notebook, 14 incremental cells)
+jupyter notebook local_tests/test_lats_components.ipynb
+```
 
-## Compared to v1 (MVP)
+## Documentation
 
-| Feature | v1 (MVP) | v2.0 |
-|---|---|---|
-| Clustering | External, fixed | Built-in, quality-assessed, iterative |
-| Multi-omics | scRNA-seq only | scRNA / snRNA / spRNA / ATAC / CITE / Metab |
-| Knowledge | LLM internal | CellWiki integration |
-| Confidence | None | Multi-dimensional scoring |
-| HITL | No | Clustering + Metadata + Annotation review |
-| Output | UMAP only | AnnData + CSV + Markdown report |
-| State design | AnnData in state | File paths only, LangGraph-safe |
+- **Quick Start**: `.research_harness_system/QUICKSTART.md`
+- **Architecture**: `.research_harness_system/ARCHITECTURE.md`
+- **Demo Notebook**: `examples/DEMO.ipynb`
+- **Usage Example**: `examples/basic_usage.py`
 
 ## License
 

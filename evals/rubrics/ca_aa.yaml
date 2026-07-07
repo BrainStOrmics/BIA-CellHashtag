@@ -1,0 +1,50 @@
+category: ca_aa
+description: CA-AA alternation decision correctness
+scale: 0.0 to 1.0 per dimension, weighted sum = final score
+pass_threshold: 0.80
+fail_threshold: 0.60
+regression_tolerance: 0.05
+
+dimensions:
+  - name: action_match
+    weight: 0.40
+    scorer: scorers.ca_aa.action_match
+    scoring:
+      exact action match: 1.0
+      "action=merge when expected=subcluster (or vice versa): 0.20"
+      "action=converge when expected=loop: 0.10 (premature stop is severe)"
+      else: 0.0
+    kind: deterministic
+
+  - name: merge_candidates_correct
+    weight: 0.25
+    scorer: scorers.ca_aa.merge_correctness
+    scoring:
+      sets equal (order-insensitive): 1.0
+      partial overlap: 0.50
+      disjoint when expected non-empty: 0.0
+    kind: deterministic
+
+  - name: subcluster_targets_correct
+    weight: 0.20
+    scorer: scorers.ca_aa.subcluster_correctness
+    scoring:
+      sets equal: 1.0
+      partial overlap: 0.50
+      missed a low-confidence cluster: 0.20
+    kind: deterministic
+
+  - name: convergence_signal_correct
+    weight: 0.15
+    scorer: scorers.ca_aa.convergence_signal
+    scoring:
+      converged matches expected: 1.0
+      premature convergence (all conf >= 0.7 check failed): 0.0
+      missed convergence: 0.30
+    kind: deterministic
+
+anti_gaming:
+  - 100% deterministic; decisions follow from state via rules in
+    docs/methods/ca-aa-algorithm.md
+  - Fixtures cover: merge-only, subcluster-only, merge+subcluster, converge,
+    max_iter cutoff, stuck-loop detection

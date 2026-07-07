@@ -1,0 +1,54 @@
+category: cluster_quality
+description: Clustering structural quality — deterministic, no LLM
+scale: 0.0 to 1.0 per dimension, weighted sum = final score
+pass_threshold: 0.75
+fail_threshold: 0.55
+regression_tolerance: 0.05
+
+dimensions:
+  - name: silhouette
+    weight: 0.35
+    scorer: scorers.cluster_quality.silhouette_score
+    scoring:
+      asw >= 0.50: 1.0
+      0.35 <= asw < 0.50: 0.85
+      0.25 <= asw < 0.35: 0.60
+      asw < 0.25: 0.20
+      asw > 0.70 and n_clusters > 20: 0.50  # overcluster suspicion
+    kind: deterministic
+
+  - name: modularity
+    weight: 0.25
+    scorer: scorers.cluster_quality.modularity_score
+    scoring:
+      mod >= 0.60: 1.0
+      0.40 <= mod < 0.60: 0.85
+      0.20 <= mod < 0.40: 0.55
+      mod < 0.20: 0.15
+    kind: deterministic
+
+  - name: cluster_size_distribution
+    weight: 0.20
+    scorer: scorers.cluster_quality.size_distribution_score
+    scoring:
+      # penalize extreme imbalance (largest / smallest > 50×)
+      ratio <= 10: 1.0
+      10 < ratio <= 30: 0.75
+      30 < ratio <= 50: 0.45
+      ratio > 50: 0.15
+      # tiny-cluster floor: any cluster < min_cells_per_cluster → multiply by 0.5
+    kind: deterministic
+
+  - name: marker_coherence
+    weight: 0.20
+    scorer: scorers.cluster_quality.marker_coherence_score
+    # Fraction of clusters whose top-15 markers share a lineage per CellWiki
+    scoring:
+      coherence >= 0.80: 1.0
+      0.60 <= coherence < 0.80: 0.70
+      coherence < 0.60: 0.30
+    kind: deterministic
+
+anti_gaming:
+  - All weights deterministic (no LLM)
+  - Overcluster suspicion dims silhouette when >20 clusters at high ASW

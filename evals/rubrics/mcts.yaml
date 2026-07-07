@@ -1,0 +1,65 @@
+category: mcts
+description: MCTS convergence and exploration/exploitation balance
+scale: 0.0 to 1.0 per dimension, weighted sum = final score
+pass_threshold: 0.70
+fail_threshold: 0.45
+regression_tolerance: 0.05
+
+dimensions:
+  - name: best_action_match
+    weight: 0.35
+    scorer: scorers.mcts.best_action_match
+    scoring:
+      matches expected best_action: 1.0
+      matches second-best: 0.40
+      else: 0.0
+    kind: deterministic
+
+  - name: tree_depth_effectiveness
+    weight: 0.25
+    scorer: scorers.mcts.depth_effectiveness
+    # best node found within max_depth_effective
+    scoring:
+      best_at_depth <= max_depth_effective: 1.0
+      best_at_depth == max_depth_effective + 1: 0.70
+      deeper: 0.30
+    kind: deterministic
+
+  - name: exploration_share
+    weight: 0.15
+    scorer: scorers.mcts.exploration_share
+    # fraction of visits NOT on the greedy-best child
+    scoring:
+      share >= expected.exploration_share_min: 1.0
+      share within 0.10 of expected: 0.70
+      share < expected - 0.20: 0.20   # over-exploitation
+      share > expected + 0.30: 0.40   # over-exploration
+    kind: deterministic
+
+  - name: ucb_consistency
+    weight: 0.15
+    scorer: scorers.mcts.ucb_consistency
+    # does select_node match closed-form UCB1 computation?
+    scoring:
+      exact match: 1.0
+      mismatch: 0.0
+    kind: deterministic
+
+  - name: backprop_discount_correctness
+    weight: 0.10
+    scorer: scorers.mcts.backprop_discount
+    # reward at root == sum(reward_d * gamma^d) along path
+    scoring:
+      exact (within 1e-6): 1.0
+      else: 0.0
+    kind: deterministic
+
+  - name: top2_variance_penalty
+    weight: 0.00
+    # information-only metric, not in score; surfaced in reports
+    scorer: scorers.mcts.top2_gap
+    kind: deterministic
+
+anti_gaming:
+  - All dimensions deterministic; this is a pure algorithm eval
+  - Fixtures are hand-computed so regressions are unambiguous

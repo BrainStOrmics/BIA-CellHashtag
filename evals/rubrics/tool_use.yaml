@@ -1,0 +1,44 @@
+category: tool_use
+description: Correct skill/tool invocation and argument shape
+scale: 0.0 to 1.0 per dimension, weighted sum = final score
+pass_threshold: 0.80
+fail_threshold: 0.60
+regression_tolerance: 0.03
+
+dimensions:
+  - name: correct_tool_selected
+    weight: 0.40
+    scorer: scorers.tool_use.correct_tool
+    scoring:
+      matches expected.tool: 1.0
+      else: 0.0
+    kind: deterministic
+
+  - name: required_args_present
+    weight: 0.30
+    scorer: scorers.tool_use.required_args
+    scoring:
+      all required args present and equal: 1.0
+      subset missing: 0.0
+    kind: deterministic
+
+  - name: no_forbidden_calls
+    weight: 0.15
+    scorer: scorers.tool_use.forbidden_calls
+    scoring:
+      must_not_call set empty in trace: 1.0
+      any forbidden call present: 0.0
+    kind: deterministic
+
+  - name: min_coverage
+    weight: 0.15
+    scorer: scorers.tool_use.coverage
+    # For multi-tool scenarios: did the agent call >= min_tools_called?
+    scoring:
+      len(called_set) >= min_tools_called: 1.0
+      else: len(called_set) / min_tools_called
+    kind: deterministic
+
+anti_gaming:
+  - Trace-based: actual tool call log, not LLM self-report
+  - 100% deterministic; LLM judge not used

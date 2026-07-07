@@ -1,4 +1,29 @@
-"""配置模块。"""
-from .config import LLMConfig, AgentConfig, load_config, setup_llm
+"""CellHashtag configuration."""
 
-__all__ = ["LLMConfig", "AgentConfig", "load_config", "setup_llm"]
+from .config import (
+    CellHashtagConfig,
+    LLMConfig,
+    ClusteringConfig,
+    AnnotationConfig,
+    LATSConfig,
+    LATSSearchConfig,
+    CellWikiConfig,
+    OutputConfig,
+    load_config,
+    setup_llm,
+    PROFILES,
+)
+
+__all__ = [
+    "CellHashtagConfig",
+    "LLMConfig",
+    "ClusteringConfig",
+    "AnnotationConfig",
+    "LATSConfig",
+    "LATSSearchConfig",
+    "CellWikiConfig",
+    "OutputConfig",
+    "load_config",
+    "setup_llm",
+    "PROFILES",
+]

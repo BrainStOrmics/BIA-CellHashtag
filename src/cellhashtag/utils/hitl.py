@@ -1,69 +1,84 @@
-"""
-HITL (Human-in-the-Loop) 交互。
+"""Human-in-the-Loop interaction for annotation review."""
 
-提供 CLI 交互式提示，让用户在关键时刻介入决策。
-"""
+from pathlib import Path
+from typing import TypedDict
 
 
-def hitl_prompt(message: str, options: dict) -> str:
+class AnnotationReviewResult(TypedDict):
+    cluster: str
+    original_cell_type: str
+    reviewed_cell_type: str
+    original_confidence: float
+    reviewed_confidence: float
+    approved: bool
+
+
+def review_low_confidence_annotations(
+    results: list[dict],
+    threshold: float = 0.5,
+) -> list[AnnotationReviewResult]:
+    """Interactively review low-confidence annotations.
+
+    Returns updated results list. If no TTY available, skip silently.
     """
-    向用户展示 HITL 提示并获取响应。
+    import sys
 
-    Args:
-        message: 提示消息。
-        options: 可选操作 {key: description}。
+    if not sys.stdin.isatty():
+        return results
 
-    Returns:
-        用户选择的 option key。
-    """
+    low_conf = [r for r in results if r.get("confidence", 0) < threshold]
+    if not low_conf:
+        return results
+
     print("\n" + "=" * 60)
-    print("🔍 需要人工确认 (Human-in-the-Loop)")
+    print("🔍 HITL: Low-Confidence Annotation Review")
     print("=" * 60)
-    print(message)
-    print("\n可选操作:")
-    for key, desc in options.items():
-        print(f"  [{key}] {desc}")
-    print("=" * 60)
+    print(f"{len(low_conf)} cluster(s) below confidence {threshold:.2f}")
 
-    while True:
-        choice = input("\n请选择 [{}]: ".format("/".join(options.keys()))).strip().lower()
-        if choice in options:
-            return choice
-        print(f"无效选择，请输入: {', '.join(options.keys())}")
+    updated = []
+    for r in results:
+        if r.get("confidence", 0) >= threshold:
+            updated.append(r)
+            continue
+
+        print(f"\n--- Cluster {r['cluster']} ---")
+        print(f"  Suggested: {r['cell_type']} (confidence: {r['confidence']:.2f})")
+        print(f"  Reasoning: {r.get('reasoning', 'N/A')}")
+        print(f"\n  [a] Accept as-is")
+        print(f"  [r] Reject → mark as Unknown")
+        print(f"  [e] Edit cell type (enter custom name)")
+        choice = input("\n  Choice [a/r/e]: ").strip().lower()
+
+        if choice == "a":
+            updated.append(r)
+        elif choice == "r":
+            updated.append({**r, "cell_type": "Unknown", "confidence": 0.0, "reasoning": "Rejected by user"})
+        elif choice == "e":
+            new_type = input("  New cell type: ").strip()
+            if new_type:
+                updated.append({**r, "cell_type": new_type, "confidence": max(r["confidence"], 0.5)})
+            else:
+                updated.append(r)
+        else:
+            updated.append(r)
+
+    return updated
 
 
-def parse_hitl_response(choice: str, context: dict) -> dict:
-    """
-    解析 HITL 响应，返回决策。
+def build_review_report(results: list[dict], output_dir: Path):
+    """Write HITL review summary to output_dir."""
+    low = [r for r in results if r.get("confidence", 0) < 0.5]
+    unknown = [r for r in results if r.get("cell_type") == "Unknown"]
+    md = f"""# HITL Review Summary
 
-    Args:
-        choice: 用户选择的 option key。
-        context: 当前上下文。
-
-    Returns:
-        决策字典。
-    """
-    return {
-        "action": choice,
-        "context": context,
-    }
-
-
-def build_clustering_hitl_message(quality_results: dict, params: dict) -> str:
-    """构建聚类质量评估的 HITL 消息。"""
-    msg = "**聚类质量评估需要确认**\n\n"
-    msg += f"当前参数:\n"
-    msg += f"- Resolution: {params.get('resolution', 'N/A')}\n"
-    msg += f"- 聚类数: {params.get('n_clusters', 'N/A')}\n\n"
-
-    msg += "工具评估结果:\n"
-    for tool, result in quality_results.items():
-        msg += f"- {tool}: {result.get('details', 'N/A')} → {result.get('recommendation', 'N/A')}\n"
-
-    msg += "\n请选择:\n"
-    msg += "1. 接受当前聚类，继续下一步\n"
-    msg += "2. 提高 resolution 重新聚类\n"
-    msg += "3. 降低 resolution 重新聚类\n"
-    msg += "4. 手动指定 resolution\n"
-
-    return msg
+Low confidence (<0.5): {len(low)} clusters
+"""
+    if low:
+        md += "\n"
+        for r in low:
+            md += f"- Cluster {r['cluster']}: {r['cell_type']} ({r['confidence']:.2f}) — {r.get('reasoning', '')}\n"
+    if unknown:
+        md += f"\nUnknown annotations: {len(unknown)} clusters\n"
+        for r in unknown:
+            md += f"- Cluster {r['cluster']}\n"
+    (output_dir / "hitl_review.md").write_text(md)
