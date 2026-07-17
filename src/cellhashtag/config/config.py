@@ -174,6 +174,28 @@ class LATSConfig(BaseModel):
     })
 
 
+class DAGMCTSConfig(BaseModel):
+    max_iterations: int = 20
+    cpuct: float = 1.5
+    tau0: float = 1.0
+    tau_gamma: float = 0.25
+    alpha: float = 0.3
+    epsilon: float = 0.05
+    early_stop_threshold: float = 0.95
+    confidence_threshold: float = 0.7
+    fpu_delta: float = 0.5
+    theta_high: float = 0.7
+    theta_low: float = 0.3
+    reward_weights: dict[str, float] = Field(default_factory=lambda: {
+        "purity": 0.25,
+        "specificity": 0.20,
+        "context": 0.20,
+        "lats": 0.20,
+        "known_marker": 0.15,
+    })
+    enable_tree_viz: bool = True
+
+
 class CellWikiConfig(BaseModel):
     wiki_dir: str = "~/CellWiki/wiki"
 
@@ -193,6 +215,7 @@ class CellHashtagConfig(BaseModel):
     clustering: ClusteringConfig = Field(default_factory=ClusteringConfig)
     annotation: AnnotationConfig = Field(default_factory=AnnotationConfig)
     lats: LATSConfig = Field(default_factory=LATSConfig)
+    dag_mcts: DAGMCTSConfig = Field(default_factory=DAGMCTSConfig)
     cellwiki: CellWikiConfig = Field(default_factory=CellWikiConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
 
